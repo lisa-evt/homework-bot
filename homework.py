@@ -1,83 +1,174 @@
+"""Телеграм-бот для отслеживания статусов проверки ДЗ на Яндекс.Практикуме."""
+
 import logging
 import os
+import sys
 import time
+from json import JSONDecodeError
 
 import requests
 from dotenv import load_dotenv
-from telebot import TeleBot, types
+from requests.exceptions import HTTPError, RequestException
+from telebot import TeleBot
+
+from exceptions import APIConnectionError, APIResponseError
 
 load_dotenv()
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.DEBUG,
+    format="%(asctime)s - [%(levelname)s] - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 
-logger = logging.getLogger(__name__)
 
-PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+PRACTICUM_TOKEN = os.getenv("PRACTICUM_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 RETRY_PERIOD = 600
-ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
-HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
+ENDPOINT = "https://practicum.yandex.ru/api/user_api/homework_statuses/"
+HEADERS = {"Authorization": f"OAuth {PRACTICUM_TOKEN}"}
 
 
 HOMEWORK_VERDICTS = {
-    'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
-    'reviewing': 'Работа взята на проверку ревьюером.',
-    'rejected': 'Работа проверена: у ревьюера есть замечания.'
+    "approved": "Работа проверена: ревьюеру всё понравилось. Ура!",
+    "reviewing": "Работа взята на проверку ревьюером.",
+    "rejected": "Работа проверена: у ревьюера есть замечания.",
 }
 
 
 def check_tokens():
+    """Проверяет доступность переменных окружения, необходимых для работы бота.
+
+    Возвращает:
+        bool: True, если все обязательные переменные окружения найдены,
+              иначе False.
+    """
     return all([PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID])
 
 
 def send_message(bot, message):
-    bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+    """Отправляет текстовое сообщение в Telegram-чат.
+
+    Аргументы:
+        bot (TeleBot): Экземпляр класса TeleBot для отправки сообщения.
+        message (str): Текст отправляемого сообщения.
+    """
+    try:
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        logging.debug('Удачная отправка сообщения в Telegram: "%s"', message)
+    except Exception as error:
+        logging.error("Сбой при отправке сообщения в Telegram: %s", error)
 
 
 def get_api_answer(timestamp):
-    payload = {'from_date': timestamp}
+    """Извлекает из информации о домашней работе её статус и готовит вердикт.
+
+    Аргументы:
+        homework (dict): Словарь с данными о конкретной домашней работе.
+
+    Исключения:
+        KeyError: Если в словаре отсутствуют обязательные ключи.
+        ValueError: Если обнаружен неизвестный статус домашней работы.
+
+    Возвращает:
+        str: Подготовленная строка с вердиктом для отправки пользователю.
+    """
+    payload = {"from_date": timestamp}
     try:
-        response = requests.get(ENDPOINT, headers=HEADERS, params=payload)
-    except
-    return response.json()
+        response = requests.get(
+            ENDPOINT, headers=HEADERS, params=payload, timeout=10
+        )
+        if response.status_code != 200:
+            raise APIConnectionError(
+                f"Эндпоинт {ENDPOINT} вернул статус-код "
+                f"{response.status_code}. Параметры: {payload}"
+            )
+        return response.json()
+
+    except HTTPError as http_err:
+        error_msg = f"Эндпоинт {ENDPOINT} недоступен: {http_err}"
+        logging.error(error_msg)
+        raise APIConnectionError(error_msg) from http_err
+
+    except RequestException as error:
+        error_msg = f"Сбой при запросе к эндпоинту: {error}"
+        logging.error(error_msg)
+        raise APIConnectionError(error_msg) from error
+
+    except JSONDecodeError as json_error:
+        error_msg = f"Ответ API не преобразуется в JSON: {json_error}"
+        logging.error(error_msg)
+        raise APIResponseError(error_msg) from json_error
 
 
 def check_response(response):
-    if not isinstance(response, dict):
-        raise TypeError('Объект response не является словарем (dict)')
-    if 'homeworks' not in response:
-        raise KeyError("В ответе API отсутствует ожидаемый ключ 'homeworks'")
-    if not isinstance(response['homeworks'], list):
-        raise TypeError("Значение ключа 'homeworks' не является списком (list)")
+    """Проверяет ответ API на соответствие документации.
 
-    return response['homeworks']
+    Аргументы:
+        response (dict): Ответ API Яндекс.Практикума в виде словаря.
+
+    Исключения:
+        APIResponseError: Если структура ответа не соответствует ожиданиям.
+
+    Возвращает:
+        list: Список домашних работ (может быть пустым).
+    """
+    if not isinstance(response, dict):
+        error_msg = "Объект response не является словарем (dict)"
+        logging.error(error_msg)
+        raise TypeError(error_msg)
+
+    if "homeworks" not in response:
+        error_msg = "В ответе API отсутствует ожидаемый ключ 'current_date'"
+        logging.error(error_msg)
+        raise APIResponseError(error_msg)
+
+    if not isinstance(response["homeworks"], list):
+        error_msg = "'homeworks' не является списком (list)"
+        logging.error(error_msg)
+        raise TypeError(error_msg)
+
+    return response["homeworks"]
 
 
 def parse_status(homework):
-    if 'homework_name' not in homework:
+    """Извлекает из информации о домашней работе её статус и готовит вердикт.
+
+    Аргументы:
+        homework (dict): Словарь с данными о конкретной домашней работе.
+
+    Исключения:
+        KeyError: Если в словаре отсутствуют обязательные ключи.
+        ValueError: Если обнаружен неизвестный статус домашней работы.
+
+    Возвращает:
+        str: Подготовленная строка с вердиктом для отправки пользователю.
+    """
+    if "homework_name" not in homework:
         raise KeyError(
-        f"В ответе API отсутствует обязательное имя домашней работы 'homework_name'. "
-        f"Полученные данные: {homework}"
+            "В ответе API отсутствует обязательное имя "
+            "домашней работы 'homework_name'. "
+            f"Полученные данные: {homework}"
+        )
+    homework_name = homework["homework_name"]
+
+    if "status" not in homework:
+        raise KeyError(
+            "В ответе API отсутствует обязательный статус "
+            f"работы 'status' для '{homework_name}'"
         )
 
-    homework_name = homework['homework_name']
-
-    if 'status' not in homework:
-        raise KeyError(
-            f"В ответе API отсутствует обязательный статус работы 'status' для '{homework_name}'"
-        )
-
-    homework_status = homework['status']
+    homework_status = homework["status"]
 
     if homework_status not in HOMEWORK_VERDICTS:
-        raise ValueError(
-            f"Получен неожиданный статус домашней работы '{homework_name}': '{homework_status}'"
+        error_msg = (
+            "Неожиданный статус домашней работы "
+            f"в ответе API: '{homework_status}'"
         )
+        logging.error(error_msg)
+        raise ValueError(error_msg)
 
     verdict = HOMEWORK_VERDICTS[homework_status]
 
@@ -85,14 +176,26 @@ def parse_status(homework):
 
 
 def main():
-    """Основная логика работы бота."""
+    """Основная логика работы бота.
 
+    Последовательно выполняет шаги:
+        1. Проверяет наличие токенов.
+        2. Опрашивает API Яндекс.Практикума.
+        3. Проверяет корректность ответа.
+        4. Отправляет уведомления в Telegram при изменении статусов.
+        5. Переходит в режим ожидания на установленный интервал RETRY_PERIOD.
+    """
     if not check_tokens():
-        raise SystemExit('Критическая ошибка: отсутствуют обязательные переменные окружения!')
+        error_msg = (
+            "Критическая ошибка: "
+            "отсутствуют обязательные переменные окружения!"
+        )
+        logging.critical(error_msg)
+        raise SystemExit(error_msg)
 
-    # Создаем объект класса бота
     bot = TeleBot(token=TELEGRAM_TOKEN)
-    timestamp = 0 #int(time.time())
+    timestamp = int(time.time())
+    last_error_message = ""
 
     while True:
         try:
@@ -103,15 +206,22 @@ def main():
                     message = parse_status(homework)
                     send_message(bot, message)
             else:
-                logger.debug("Нет новых статусов домашних работ для отправки.")
+                logging.debug("Нет новых статусов домашних работ.")
 
-            timestamp = response['current_date']
+            timestamp = response["current_date"]
+
+            last_error_message = ""
 
         except Exception as error:
-            message = f'Сбой в работе программы: {error}'
+            error_msg = f"Сбой в работе программы: {error}"
+            logging.error(error_msg)
+
+            if error_msg != last_error_message:
+                send_message(bot, error_msg)
+                last_error_message = error_msg
 
         time.sleep(RETRY_PERIOD)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
