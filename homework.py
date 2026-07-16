@@ -40,12 +40,27 @@ HOMEWORK_VERDICTS = {
 
 def check_tokens():
     """Проверяет доступность переменных окружения, необходимых для работы бота.
-
     Возвращает:
         bool: True, если все обязательные переменные окружения найдены,
-              иначе False.
+            иначе False.
     """
-    return all([PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID])
+    tokens = {
+        "PRACTICUM_TOKEN": PRACTICUM_TOKEN,
+        "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
+        "TELEGRAM_CHAT_ID": TELEGRAM_CHAT_ID,
+    }
+
+    valid_tokens = True
+
+    for token_name, token_value in tokens.items():
+        if not token_value:
+            logging.critical(
+                'Отсутствует обязательная переменная окружения: "%s"',
+                token_name
+            )
+            valid_tokens = False
+
+    return valid_tokens
 
 
 def send_message(bot, message):
@@ -59,7 +74,7 @@ def send_message(bot, message):
         bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
         logging.debug('Удачная отправка сообщения в Telegram: "%s"', message)
     except Exception as error:
-        logging.error("Сбой при отправке сообщения в Telegram: %s", error)
+        logging.error('Сбой при отправке сообщения в Telegram: "%s"', error)
 
 
 def get_api_answer(timestamp):
@@ -186,12 +201,7 @@ def main():
         5. Переходит в режим ожидания на установленный интервал RETRY_PERIOD.
     """
     if not check_tokens():
-        error_msg = (
-            "Критическая ошибка: "
-            "отсутствуют обязательные переменные окружения!"
-        )
-        logging.critical(error_msg)
-        raise SystemExit(error_msg)
+        raise SystemExit("Работа программы остановлена отсутствием токенов")
 
     bot = TeleBot(token=TELEGRAM_TOKEN)
     timestamp = int(time.time())
