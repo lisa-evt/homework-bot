@@ -8,7 +8,7 @@ from json import JSONDecodeError
 
 import requests
 from dotenv import load_dotenv
-from requests.exceptions import HTTPError, RequestException
+from requests.exceptions import RequestException
 from telebot import TeleBot
 
 from exceptions import APIConnectionError, APIResponseError
@@ -78,17 +78,18 @@ def send_message(bot, message):
 
 
 def get_api_answer(timestamp):
-    """Извлекает из информации о домашней работе её статус и готовит вердикт.
+    """Запрашивает данные у API за указанный период времени.
 
-    Аргументы:
-        homework (dict): Словарь с данными о конкретной домашней работе.
+    Args:
+        timestamp (int/str): Временная метка для фильтрации данных
+            (параметр 'from_date').
 
-    Исключения:
-        KeyError: Если в словаре отсутствуют обязательные ключи.
-        ValueError: Если обнаружен неизвестный статус домашней работы.
+    Returns:
+        dict: Ответ API в формате JSON (десериализованный в словарь).
 
-    Возвращает:
-        str: Подготовленная строка с вердиктом для отправки пользователю.
+    Raises:
+        APIConnectionError: Если API вернул статус-код, отличный от 200.
+        requests.exceptions.RequestException: При проблемах с сетью.
     """
     payload = {"from_date": timestamp}
     try:
@@ -96,16 +97,14 @@ def get_api_answer(timestamp):
             ENDPOINT, headers=HEADERS, params=payload, timeout=10
         )
         if response.status_code != 200:
-            raise APIConnectionError(
+            error_msg = (
                 f"Эндпоинт {ENDPOINT} вернул статус-код "
                 f"{response.status_code}. Параметры: {payload}"
             )
-        return response.json()
+            logging.error(error_msg)
+            raise APIConnectionError(error_msg)
 
-    except HTTPError as http_err:
-        error_msg = f"Эндпоинт {ENDPOINT} недоступен: {http_err}"
-        logging.error(error_msg)
-        raise APIConnectionError(error_msg) from http_err
+        return response.json()
 
     except RequestException as error:
         error_msg = f"Сбой при запросе к эндпоинту: {error}"
@@ -136,7 +135,7 @@ def check_response(response):
         raise TypeError(error_msg)
 
     if "homeworks" not in response:
-        error_msg = "В ответе API отсутствует ожидаемый ключ 'current_date'"
+        error_msg = 'В ответе API отсутствует ожидаемый ключ "homeworks"'
         logging.error(error_msg)
         raise APIResponseError(error_msg)
 
