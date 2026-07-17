@@ -15,11 +15,41 @@ from exceptions import APIConnectionError, APIResponseError
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - [%(levelname)s] - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+
+class ColorFormatter(logging.Formatter):
+    grey = "\033[38;20m"
+    green = "\033[32m"
+    yellow = "\033[33m"
+    red = "\033[31m"
+    bold_red = "\033[31;1m"
+    reset = "\033[0m"
+
+    log_format = "%(asctime)s - [%(levelname)s] - %(message)s"
+
+    FORMATS = {
+        logging.DEBUG: grey + log_format + reset,
+        logging.INFO: green + log_format + reset,
+        logging.WARNING: yellow + log_format + reset,
+        logging.ERROR: red + log_format + reset,
+        logging.CRITICAL: bold_red + log_format + reset,
+    }
+
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        # Динамически создаем форматтер под нужный уровень цвета
+        formatter = logging.Formatter(log_fmt)
+        return formatter.format(record)
+
+
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.DEBUG)
+
+console_handler.setFormatter(ColorFormatter())
+
+logger.addHandler(console_handler)
 
 
 PRACTICUM_TOKEN = os.getenv("PRACTICUM_TOKEN")
@@ -56,7 +86,7 @@ def check_tokens():
         if not token_value:
             logging.critical(
                 'Отсутствует обязательная переменная окружения: "%s"',
-                token_name
+                token_name,
             )
             valid_tokens = False
 
