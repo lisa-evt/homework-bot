@@ -5,5 +5,5 @@ class APIConnectionError(Exception):
     """Исключение для ошибок подключения к API Яндекс.Практикума."""
 
 
-class APIResponseError(Exception):
+class APIResponseError(KeyError):
     """Исключение для неверного формата ответа от API Яндекс.Практикума."""
