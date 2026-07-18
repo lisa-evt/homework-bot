@@ -4,8 +4,9 @@ import logging
 import os
 import sys
 import time
-from json import JSONDecodeError
 from http import HTTPStatus
+from json import JSONDecodeError
+
 import requests
 from dotenv import load_dotenv
 from requests.exceptions import RequestException
@@ -83,9 +84,9 @@ def send_message(bot, message):
     except (ApiException, RequestException) as error:
         logger.exception('Сбой при отправке сообщения в Telegram: "%s"', error)
         return False
-    else:
-        logger.debug('Удачная отправка сообщения в Telegram: "%s"', message)
-        return True
+
+    logger.debug('Удачная отправка сообщения в Telegram: "%s"', message)
+    return True
 
 
 def get_api_answer(timestamp):
@@ -107,25 +108,22 @@ def get_api_answer(timestamp):
         response = requests.get(
             ENDPOINT, headers=HEADERS, params=payload, timeout=10
         )
-        if response.status_code != HTTPStatus.OK:
-            error_msg = (
-                f"Эндпоинт {ENDPOINT} вернул статус-код "
-                f"{response.status_code}. Параметры: {payload}"
-            )
-            logger.error(error_msg)
-            raise APIConnectionError(error_msg)
-
-        return response.json()
-
     except RequestException as error:
         error_msg = f"Сбой при запросе к эндпоинту: {error}"
-        logger.error(error_msg)
         raise APIConnectionError(error_msg) from error
 
+    if response.status_code != HTTPStatus.OK:
+        raise APIConnectionError(
+            f"Эндпоинт {ENDPOINT} вернул статус-код "
+            f"{response.status_code}. Параметры: {payload}"
+        )
+
+    try:
+        return response.json()
     except JSONDecodeError as json_error:
-        error_msg = f"Ответ API не преобразуется в JSON: {json_error}"
-        logger.error(error_msg)
-        raise APIResponseError(error_msg) from json_error
+        raise APIResponseError(
+            f"Ответ API не преобразуется в JSON: {json_error}"
+        ) from json_error
 
 
 def check_response(response):
@@ -141,24 +139,23 @@ def check_response(response):
         list: Список домашних работ (может быть пустым).
     """
     if not isinstance(response, dict):
-        error_msg = (
-            f"Объект response не является словарем (dict), "
-            f"получен тип: {type(response).__name__}"
+        response_type = type(response).__name__
+        raise TypeError(
+            f'Объект response не является словарем (dict), '
+            f'получен тип: {response_type}'
         )
-        logger.error(error_msg)
-        raise TypeError(error_msg)
 
     if 'homeworks' not in response:
-        error_msg = 'В ответе API отсутствует ожидаемый ключ "homeworks"'
-        logger.error(error_msg)
-        raise APIResponseError(error_msg)
+        raise KeyError('В ответе API отсутствует ожидаемый ключ "homeworks"')
 
     homeworks = response['homeworks']
 
     if not isinstance(homeworks, list):
-        error_msg = "'homeworks' не является списком (list)"
-        logger.error(error_msg)
-        raise TypeError(error_msg)
+        homeworks_type = type(homeworks).__name__
+        raise TypeError(
+            '"homeworks" не является списком (list), '
+            f'получен тип: {homeworks_type}'
+        )
 
     return homeworks
 
@@ -193,12 +190,10 @@ def parse_status(homework):
     homework_status = homework["status"]
 
     if homework_status not in HOMEWORK_VERDICTS:
-        error_msg = (
+        raise ValueError(
             "Неожиданный статус домашней работы "
             f"в ответе API: '{homework_status}'"
         )
-        logger.error(error_msg)
-        raise ValueError(error_msg)
 
     verdict = HOMEWORK_VERDICTS[homework_status]
 
